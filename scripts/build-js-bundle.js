@@ -1,5 +1,4 @@
 import fs from 'fs-extra';
-import chalk from 'chalk';
 import elapsed from 'elapsed-time-logger';
 import { rollup } from 'rollup';
 import { babel } from '@rollup/plugin-babel';
@@ -13,6 +12,7 @@ import isProd from './utils/isProd.js';
 import { capitalizeString } from './utils/helper.js';
 
 async function buildEntry(modules, format, browser = false) {
+  const env = process.env.NODE_ENV || 'development';
   const isUMD = format === 'umd';
   const isESM = format === 'esm';
   if (isUMD) browser = true;
@@ -52,7 +52,16 @@ async function buildEntry(modules, format, browser = false) {
       }),
     )
     .then(async (bundle) => {
-      if (!isProd || !browser) {
+      if (!browser && (format === 'cjs' || format === 'esm')) {
+        // Fix imports
+        const modularContent = fs
+          .readFileSync(`./${outputDir}/${filename}.js`, 'utf-8')
+          .replace(/require\('\.\//g, `require('./${format}/`)
+          .replace(/from '\.\//g, `from './${format}/`);
+        fs.writeFileSync(`./${outputDir}/${filename}.js`, modularContent);
+      }
+      if (env === 'development' || !browser) {
+        // if (cb) cb();
         return;
       }
       const result = bundle.output[0];
@@ -81,6 +90,7 @@ async function buildEntry(modules, format, browser = false) {
 }
 
 export default async function buildJsBundle() {
+  const env = process.env.NODE_ENV || 'development';
   elapsed.start('bundle');
   const modules = [];
   configModules.forEach((name) => {
@@ -90,7 +100,16 @@ export default async function buildJsBundle() {
       modules.push({ name, capitalized });
     }
   });
-  return Promise.all([buildEntry(modules, 'umd'), buildEntry(modules, 'esm')]).then(() => {
-    elapsed.end('bundle', chalk.green('\nBundle build completed!'));
-  });
+  if (env === 'development') {
+    return Promise.all([
+      buildEntry(modules, 'umd', true, () => {}),
+      buildEntry(modules, 'esm', false, () => {}),
+    ]);
+  }
+  return Promise.all([
+    buildEntry(modules, 'esm', false, () => {}),
+    buildEntry(modules, 'esm', true, () => {}),
+    buildEntry(modules, 'umd', true, () => {}),
+    buildEntry(modules, 'cjs', false, () => {}),
+  ]);
 }
